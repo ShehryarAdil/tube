@@ -153,36 +153,58 @@ def run_download(task_id, url, quality):
     import shutil
     import tempfile
 
-    format_map = {
-        "best":   "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "1080p":  "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
-        "720p":   "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
-        "480p":   "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]",
-        "audio":  "bestaudio[ext=m4a]/bestaudio",
-    }
-    fmt = format_map.get(quality, format_map["best"])
-    out_tmpl = str(DOWNLOAD_DIR / "%(title)s.%(ext)s")
-
-    # Use full path to yt-dlp
-    yt_dlp_path = shutil.which("yt-dlp") or "yt-dlp"
-
-    cmd = [
-        yt_dlp_path,
-        "-f", fmt,
-        "--merge-output-format", "mp4",
-        "--newline",
-        "--progress",
-        "-o", out_tmpl,
-        url,
-    ]
-
-    with download_lock:
-        active_downloads[task_id]["status"] = "downloading"
-
-    # Temporarily disable Firestore sync for testing
-    # sync_download_to_firestore(task_id, url, "downloading")
-
     try:
+        format_map = {
+            "best":   "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "1080p":  "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
+            "720p":   "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
+            "480p":   "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]",
+            "audio":  "bestaudio[ext=m4a]/bestaudio",
+        }
+        fmt = format_map.get(quality, format_map["best"])
+        out_tmpl = str(DOWNLOAD_DIR / "%(title)s.%(ext)s")
+
+        # Use full path to yt-dlp
+        yt_dlp_path = shutil.which("yt-dlp") or "yt-dlp"
+
+        cmd = [
+            yt_dlp_path,
+            "-f", fmt,
+            "--merge-output-format", "mp4",
+            "--newline",
+            "--progress",
+            "-o", out_tmpl,
+            url,
+        ]
+
+        with download_lock:
+            active_downloads[task_id]["status"] = "downloading"
+
+        sync_download_to_firestore(task_id, url, "downloading")
+
+        proc_result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+
+        if proc_result.returncode == 0:
+            with download_lock:
+                active_downloads[task_id]["status"] = "done"
+                active_downloads[task_id]["progress"] = 100
+            sync_download_to_firestore(task_id, url, "done", progress=100)
+        else:
+            with download_lock:
+                active_downloads[task_id]["status"] = "error"
+                active_downloads[task_id]["error"] = "yt-dlp failed: {}".format(proc_result.stderr[:200])
+            sync_download_to_firestore(task_id, url, "error", error="yt-dlp failed")
+
+    except Exception as e:
+        with download_lock:
+            active_downloads[task_id]["status"] = "error"
+            active_downloads[task_id]["error"] = str(e)[:200]
+        sync_download_to_firestore(task_id, url, "error", error=str(e))
+        return
+
+    # Old subprocess.Popen code below (disabled)
+    if False:
+        try:
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -297,7 +319,7 @@ def api_delete():
             try:
                 db.collection('devices').document(DEVICE_ID).collection('downloads').document(task_id).delete()
             except Exception as e:
-                print(f"⚠ Could not delete from Firestore: {e}")
+                print("[WARNING] Could not delete from Firestore: {}".format(str(e)[:100]))
         return jsonify({"ok": True})
     return jsonify({"error": "File not found"}), 404
 
