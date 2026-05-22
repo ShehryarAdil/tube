@@ -13,7 +13,13 @@
       "Bash(git push *)",
       "Bash(pip install *)",
       "Bash(timeout 5 python dashboard.py)",
-      "Bash(timeout 3 python dashboard.py)"
+      "Bash(timeout 3 python dashboard.py)",
+      "Bash(timeout 8 python dashboard.py)",
+      "Bash(python dashboard.py)",
+      "Bash(curl http://localhost:5000/api/device)",
+      "Bash(kill %1)",
+      "Bash(python -c \"from dashboard import *; print\\('✓ Module imports successfully'\\)\")",
+      "Bash(python -c \"import dashboard; print\\('Module imports OK'\\)\")"
     ]
   }
 }
