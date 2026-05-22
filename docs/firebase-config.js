@@ -2,13 +2,13 @@
 // This is public and safe to commit (API key is public; Firestore rules enforce security)
 // Update with your Firebase project's public config from Firebase Console
 
-const FIREBASE_CONFIG = {
-  apiKey: "YOUR_API_KEY_HERE",
-  authDomain: "tube-56f4f.firebaseapp.com",
-  projectId: "tube-56f4f",
-  storageBucket: "tube-56f4f.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+const firebaseConfig = {
+  apiKey: "AIzaSyBWzZBc1VCTP-_DKr75jY-IlljqUcDDXs8",
+  authDomain: "tube-43be5.firebaseapp.com",
+  projectId: "tube-43be5",
+  storageBucket: "tube-43be5.firebasestorage.app",
+  messagingSenderId: "191205749894",
+  appId: "1:191205749894:web:9e537d90a9391caad44d07"
 };
 
 // Export for use in index.html
