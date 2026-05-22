@@ -79,9 +79,9 @@ def init_firebase():
         firebase_admin.initialize_app(cred)
         db = firestore.client()
         register_device()
-        print(f"✓ Firebase initialized for device: {DEVICE_ID}")
+        print("[OK] Firebase initialized for device: {}".format(DEVICE_ID))
     except Exception as e:
-        print(f"⚠ Firebase not configured: {e}")
+        print("[WARNING] Firebase not configured: {}".format(str(e)[:100]))
         print("  Downloads will work locally without cloud sync.")
         db = None
 
@@ -96,7 +96,7 @@ def register_device():
             "platform": platform.system(),
         }, merge=True)
     except Exception as e:
-        print(f"⚠ Could not register device: {e}")
+        print("[WARNING] Could not register device: {}".format(str(e)[:100]))
 
 def sync_download_to_firestore(task_id, url, status, filename=None, progress=0, error=None):
     """Write download metadata to Firestore"""
@@ -860,7 +860,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print("  VaultTube Dashboard")
     print("  http://localhost:5000")
-    print(f"  Videos saved to: {DOWNLOAD_DIR}")
-    print(f"  Device: {DEVICE_ID}")
+    print("  Videos saved to: {}".format(DOWNLOAD_DIR))
+    print("  Device: {}".format(DEVICE_ID))
     print("=" * 50)
     app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
