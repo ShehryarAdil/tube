@@ -17,14 +17,110 @@ import json
 import threading
 import subprocess
 import glob
+import socket
+import platform
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, jsonify, request, send_from_directory, Response
+from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+load_dotenv()
 
 app = Flask(__name__)
 
-DOWNLOAD_DIR = Path("downloads")
-DOWNLOAD_DIR.mkdir(exist_ok=True)
+# ─────────────────────────────────────────────
+# Platform-Specific Downloads Directory
+# ─────────────────────────────────────────────
+
+def get_platform_downloads_dir():
+    """Return platform-specific youtube_downloads path"""
+    system = platform.system()
+
+    if system == "Darwin":  # macOS
+        base = Path.home() / "Library" / "Application Support"
+    elif system == "Windows":
+        base = Path.home() / "AppData" / "Local"
+    else:  # Linux
+        base = Path.home() / ".local" / "share"
+
+    youtube_dir = base / "youtube_downloads"
+    youtube_dir.mkdir(parents=True, exist_ok=True)
+    return youtube_dir
+
+DOWNLOAD_DIR = get_platform_downloads_dir()
+
+# ─────────────────────────────────────────────
+# Firebase Initialization
+# ─────────────────────────────────────────────
+
+DEVICE_ID = os.getenv("DEVICE_ID", socket.gethostname())
+db = None
+
+def init_firebase():
+    """Initialize Firebase with credentials from environment"""
+    global db
+    try:
+        firebase_config = {
+            "type": "service_account",
+            "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+            "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("FIREBASE_PRIVATE_KEY", "").replace("\\n", "\n"),
+            "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+            "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": os.getenv("FIREBASE_CERT_URL", ""),
+        }
+
+        cred = credentials.Certificate(firebase_config)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        register_device()
+        print(f"✓ Firebase initialized for device: {DEVICE_ID}")
+    except Exception as e:
+        print(f"⚠ Firebase not configured: {e}")
+        print("  Downloads will work locally without cloud sync.")
+        db = None
+
+def register_device():
+    """Register device in Firestore on startup"""
+    if db is None:
+        return
+    try:
+        db.collection('devices').document(DEVICE_ID).set({
+            "name": DEVICE_ID,
+            "last_seen": firestore.SERVER_TIMESTAMP,
+            "platform": platform.system(),
+        }, merge=True)
+    except Exception as e:
+        print(f"⚠ Could not register device: {e}")
+
+def sync_download_to_firestore(task_id, url, status, filename=None, progress=0, error=None):
+    """Write download metadata to Firestore"""
+    if db is None:
+        return
+    try:
+        doc_ref = db.collection('devices').document(DEVICE_ID).collection('downloads').document(task_id)
+
+        data = {
+            "url": url,
+            "status": status,
+            "progress": progress,
+            "timestamp": firestore.SERVER_TIMESTAMP,
+        }
+        if filename:
+            data["filename"] = filename
+        if error:
+            data["error"] = error
+        if status == "done":
+            data["completed_at"] = firestore.SERVER_TIMESTAMP
+
+        doc_ref.set(data, merge=True)
+    except Exception as e:
+        print(f"⚠ Firestore sync failed: {e}")
 
 # Track active downloads: { task_id: { status, url, progress, filename, error } }
 active_downloads = {}
@@ -76,6 +172,7 @@ def run_download(task_id, url, quality):
 
     with download_lock:
         active_downloads[task_id]["status"] = "downloading"
+    sync_download_to_firestore(task_id, url, "downloading")
 
     try:
         proc = subprocess.Popen(
@@ -96,12 +193,14 @@ def run_download(task_id, url, quality):
                     pct = float(pct_match.group(1))
                     with download_lock:
                         active_downloads[task_id]["progress"] = pct
+                    sync_download_to_firestore(task_id, url, "downloading", progress=pct)
                 # Extract destination filename
                 dest_match = re.search(r"Destination:\s+(.+)", line)
                 if dest_match:
                     filename = Path(dest_match.group(1)).name
                     with download_lock:
                         active_downloads[task_id]["filename"] = filename
+                    sync_download_to_firestore(task_id, url, "downloading", filename=filename)
             # Merger line gives final name
             if "[Merger]" in line or "Merging formats" in line:
                 merge_match = re.search(r'"([^"]+)"', line)
@@ -109,24 +208,29 @@ def run_download(task_id, url, quality):
                     filename = Path(merge_match.group(1)).name
                     with download_lock:
                         active_downloads[task_id]["filename"] = filename
+                    sync_download_to_firestore(task_id, url, "downloading", filename=filename)
 
         proc.wait()
         if proc.returncode == 0:
             with download_lock:
                 active_downloads[task_id]["status"] = "done"
                 active_downloads[task_id]["progress"] = 100
+            sync_download_to_firestore(task_id, url, "done", filename=filename, progress=100)
         else:
             with download_lock:
                 active_downloads[task_id]["status"] = "error"
                 active_downloads[task_id]["error"] = "yt-dlp exited with an error. Check the URL or format."
+            sync_download_to_firestore(task_id, url, "error", error="yt-dlp exited with an error")
     except FileNotFoundError:
         with download_lock:
             active_downloads[task_id]["status"] = "error"
             active_downloads[task_id]["error"] = "yt-dlp not found. Install it: pip install yt-dlp"
+        sync_download_to_firestore(task_id, url, "error", error="yt-dlp not found")
     except Exception as e:
         with download_lock:
             active_downloads[task_id]["status"] = "error"
             active_downloads[task_id]["error"] = str(e)
+        sync_download_to_firestore(task_id, url, "error", error=str(e))
 
 
 # ─────────────────────────────────────────────
@@ -176,11 +280,29 @@ def api_status(task_id):
 def api_delete():
     data = request.get_json(force=True)
     name = data.get("name", "")
+    task_id = data.get("task_id")
     target = DOWNLOAD_DIR / Path(name).name  # prevent path traversal
     if target.exists() and target.is_file():
         target.unlink()
+        # Sync deletion to Firestore
+        if task_id and db:
+            try:
+                db.collection('devices').document(DEVICE_ID).collection('downloads').document(task_id).delete()
+            except Exception as e:
+                print(f"⚠ Could not delete from Firestore: {e}")
         return jsonify({"ok": True})
     return jsonify({"error": "File not found"}), 404
+
+
+@app.route("/api/device")
+def api_device():
+    """Return device information"""
+    return jsonify({
+        "device_id": DEVICE_ID,
+        "platform": platform.system(),
+        "downloads_dir": str(DOWNLOAD_DIR),
+        "firebase_enabled": db is not None,
+    })
 
 
 @app.route("/video/<path:filename>")
@@ -734,9 +856,11 @@ def index():
 
 
 if __name__ == "__main__":
+    init_firebase()
     print("=" * 50)
     print("  VaultTube Dashboard")
     print("  http://localhost:5000")
-    print("  Videos saved to: ./downloads/")
+    print(f"  Videos saved to: {DOWNLOAD_DIR}")
+    print(f"  Device: {DEVICE_ID}")
     print("=" * 50)
     app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
