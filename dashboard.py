@@ -120,7 +120,7 @@ def sync_download_to_firestore(task_id, url, status, filename=None, progress=0, 
 
         doc_ref.set(data, merge=True)
     except Exception as e:
-        print(f"⚠ Firestore sync failed: {e}")
+        pass  # Fail silently - downloads continue even if Firestore is unavailable
 
 # Track active downloads: { task_id: { status, url, progress, filename, error } }
 active_downloads = {}
