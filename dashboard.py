@@ -150,6 +150,9 @@ def get_video_files():
 
 def run_download(task_id, url, quality):
     """Run yt-dlp in a thread and stream progress into active_downloads."""
+    import shutil
+    import tempfile
+
     format_map = {
         "best":   "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "1080p":  "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]",
@@ -160,8 +163,11 @@ def run_download(task_id, url, quality):
     fmt = format_map.get(quality, format_map["best"])
     out_tmpl = str(DOWNLOAD_DIR / "%(title)s.%(ext)s")
 
+    # Use full path to yt-dlp
+    yt_dlp_path = shutil.which("yt-dlp") or "yt-dlp"
+
     cmd = [
-        "yt-dlp",
+        yt_dlp_path,
         "-f", fmt,
         "--merge-output-format", "mp4",
         "--newline",
@@ -172,7 +178,9 @@ def run_download(task_id, url, quality):
 
     with download_lock:
         active_downloads[task_id]["status"] = "downloading"
-    sync_download_to_firestore(task_id, url, "downloading")
+
+    # Temporarily disable Firestore sync for testing
+    # sync_download_to_firestore(task_id, url, "downloading")
 
     try:
         proc = subprocess.Popen(
@@ -193,14 +201,14 @@ def run_download(task_id, url, quality):
                     pct = float(pct_match.group(1))
                     with download_lock:
                         active_downloads[task_id]["progress"] = pct
-                    sync_download_to_firestore(task_id, url, "downloading", progress=pct)
+                            # sync_download_to_firestore(task_id, url, "downloading", progress=pct)
                 # Extract destination filename
                 dest_match = re.search(r"Destination:\s+(.+)", line)
                 if dest_match:
                     filename = Path(dest_match.group(1)).name
                     with download_lock:
                         active_downloads[task_id]["filename"] = filename
-                    sync_download_to_firestore(task_id, url, "downloading", filename=filename)
+                    # sync_download_to_firestore(task_id, url, "downloading", filename=filename)
             # Merger line gives final name
             if "[Merger]" in line or "Merging formats" in line:
                 merge_match = re.search(r'"([^"]+)"', line)
@@ -208,29 +216,29 @@ def run_download(task_id, url, quality):
                     filename = Path(merge_match.group(1)).name
                     with download_lock:
                         active_downloads[task_id]["filename"] = filename
-                    sync_download_to_firestore(task_id, url, "downloading", filename=filename)
+                    # sync_download_to_firestore(task_id, url, "downloading", filename=filename)
 
         proc.wait()
         if proc.returncode == 0:
             with download_lock:
                 active_downloads[task_id]["status"] = "done"
                 active_downloads[task_id]["progress"] = 100
-            sync_download_to_firestore(task_id, url, "done", filename=filename, progress=100)
+            # sync_download_to_firestore(task_id, url, "done", filename=filename, progress=100)
         else:
             with download_lock:
                 active_downloads[task_id]["status"] = "error"
                 active_downloads[task_id]["error"] = "yt-dlp exited with an error. Check the URL or format."
-            sync_download_to_firestore(task_id, url, "error", error="yt-dlp exited with an error")
+            # sync_download_to_firestore(task_id, url, "error", error="yt-dlp exited with an error")
     except FileNotFoundError:
         with download_lock:
             active_downloads[task_id]["status"] = "error"
             active_downloads[task_id]["error"] = "yt-dlp not found. Install it: pip install yt-dlp"
-        sync_download_to_firestore(task_id, url, "error", error="yt-dlp not found")
+        # sync_download_to_firestore(task_id, url, "error", error="yt-dlp not found")
     except Exception as e:
         with download_lock:
             active_downloads[task_id]["status"] = "error"
             active_downloads[task_id]["error"] = str(e)
-        sync_download_to_firestore(task_id, url, "error", error=str(e))
+        # sync_download_to_firestore(task_id, url, "error", error=str(e))
 
 
 # ─────────────────────────────────────────────
@@ -863,4 +871,4 @@ if __name__ == "__main__":
     print("  Videos saved to: {}".format(DOWNLOAD_DIR))
     print("  Device: {}".format(DEVICE_ID))
     print("=" * 50)
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
