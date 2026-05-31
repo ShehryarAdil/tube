@@ -392,6 +392,7 @@ const firebaseConfig = {
 
 let db = null;
 let firebaseAvailable = false;
+let flaskAvailable = false;
 let deviceId = localStorage.getItem('deviceId') || 'unknown-device';
 
 // Initialize Firebase
@@ -399,15 +400,14 @@ try {
   const app = initializeApp(firebaseConfig);
   db = getFirestore(app);
   firebaseAvailable = true;
-  updateConnectionBadge(true);
+  updateConnectionBadge();
 } catch (e) {
   console.warn('Firebase not configured:', e);
-  updateConnectionBadge(false);
+  updateConnectionBadge();
 }
 
 // ── Local Flask API Setup ───────────────────
 const FLASK_URL = 'http://localhost:5000';
-let flaskAvailable = false;
 
 async function checkFlaskConnection() {
   try {
@@ -417,19 +417,19 @@ async function checkFlaskConnection() {
       deviceId = data.device_id;
       localStorage.setItem('deviceId', deviceId);
       flaskAvailable = true;
-      updateConnectionBadge(true);
+      updateConnectionBadge();
       return data;
     }
   } catch (e) {
     flaskAvailable = false;
-    updateConnectionBadge(false);
+    updateConnectionBadge();
   }
   return null;
 }
 
-function updateConnectionBadge(connected) {
+function updateConnectionBadge() {
   const badge = document.getElementById('connection-badge');
-  if (connected && flaskAvailable) {
+  if (firebaseAvailable && flaskAvailable) {
     badge.textContent = '✓ Connected';
     badge.classList.remove('offline');
   } else {
